@@ -68,7 +68,7 @@
     </div>
 
     <div id="dropZone" class="mb-6 bg-slate-700 border-2 border-dashed border-slate-600 rounded-lg">
-      <p class="text-sm text-slate-400">Drag & Drop an image</p>
+      <p class="text-sm text-slate-400">Drag & Drop an image (or drop anywhere on the page)</p>
       <label for="imageInput" id="imageUploadLabel" class="bg-blue-600 hover:bg-blue-700 text-white">Choose Image</label>
       <input type="file" id="imageInput" accept="image/*">
       <span id="fileName" class="block text-sm text-slate-400 italic mt-2">No file chosen</span>
@@ -123,11 +123,1019 @@
 
   <script src="config.js"></script>
   <script>
-    // The full JS code is lengthy and included earlier in this conversation.
-    // To keep your step simple, use the exact index.html I provided previously which includes:
-    // - Parallel OCR (browser Tesseract + backend Gemini)
-    // - All parsing, filename, hex logic
-    // If you need me to re-paste the full JS inline again, say "repost index.html JS" and I will paste it entirely.
+    const dataInput = document.getElementById('dataInput');
+    const pasteButton = document.getElementById('pasteButton');
+    const submitButton = document.getElementById('submitButton');
+    const outputSection = document.getElementById('outputSection');
+    const extractedInfoDiv = document.getElementById('extractedInfo');
+    const filenameOutputDiv = document.getElementById('filenameOutput');
+    const copyFilenameButton = document.getElementById('copyFilenameButton');
+    const editFilenameButton = document.getElementById('editFilenameButton');
+    const editIcon = document.getElementById('editIcon');
+    const saveIcon = document.getElementById('saveIcon');
+    const messageBox = document.getElementById('messageBox');
+    const pageTitle = document.getElementById('pageTitle');
+    const imageInput = document.getElementById('imageInput');
+    const fileNameSpan = document.getElementById('fileName');
+    const submitSpinner = document.getElementById('submitSpinner');
+    const dropZone = document.getElementById('dropZone');
+    const ocrWarningStar = document.getElementById('ocrWarningStar');
+    const ocrWarningHint = document.getElementById('ocrWarningHint');
+    const imagePreviewSection = document.getElementById('imagePreviewSection');
+    const previewImageElement = document.getElementById('previewImageElement');
+    const ocrSourceDisplay = document.getElementById('ocrSourceDisplay');
+    const failedKeyWarningDiv = document.getElementById('failedKeyWarning');
+
+    let selectedFile = null;
+    let hasProcessedOnce = false;
+    let currentProcessedData = {};
+    let currentFilenameSizePart = "";
+    const usedOcrEngines = new Set();
+
+    // --- Caching Logic ---
+    function getHexCache() {
+      return JSON.parse(localStorage.getItem('hexCodeCache') || '{}');
+    }
+    function saveHexCache(cache) {
+      localStorage.setItem('hexCodeCache', JSON.stringify(cache));
+    }
+
+    // --- Internal Color Database (preserved exactly) ---
+    const commonColorHexMap = {
+      'indian red': '#CD5C5C','light coral': '#F08080','salmon': '#FA8072','dark salmon': '#E9967A',
+      'light salmon': '#FFA07A','crimson': '#DC143C','red': '#FF0000','matte red': '#B33F40',
+      'glossy red': '#DD0004','light red': '#C91100','metallic red': '#B71C1C','fire brick': '#B22222',
+      'dark red': '#8B0000','alabama crimson': '#AF002A','pink': '#FFC0CB','matte pink': '#EC407A',
+      'glossy pink': '#FF35B8','metallic pink': '#AD1457','light pink': '#FFB6C1','hot pink': '#FF69B4',
+      'deep pink': '#FF1493','medium violet red': '#C71585','pale violet red': '#DB7093',
+      'soft pink': '#FFB8BF','matte soft pink': '#D288A2','coral': '#FF7F50','tomato': '#FF6347','orange red': '#FF4500',
+      'dark orange': '#FF8C00','orange': '#FFA500','matte orange': '#F57C00','metallic orange': '#E65100',
+      'gold': '#FFD700','yellow': '#FFFF00','matte yellow': '#FBC02D','metallic yellow': '#F9A825','matte gold': '#D2BF37',
+      'glossy yellow': '#FFF158','light yellow': '#FFFFE0','lemon chiffon': '#FFFACD','papaya whip': '#FFEFD5','moccasin': '#FFE4B5',
+      'peach puff': '#FFDAB9','pale goldenrod': '#EEE8AA','khaki': '#F0E68C','dark khaki': '#BDB76B',
+      'brimstone yellow': '#F4D83F','green yellow': '#ADFF2F','chartreuse': '#7FFF00','lawn green': '#7CFC00',
+      'lime': '#00FF00','matte lime': '#AFB42B','metallic lime': '#827717','lime green': '#32CD32',
+      'lime-tree green': '#7CBF4E','pale green': '#98FB98','light green': '#90EE90',
+      'medium spring green': '#00FA9A','spring green': '#00FF7F','medium sea green': '#3CB371',
+      'sea green': '#2E8B57','forest green': '#228B22','green': '#00BF00','matte green': '#48A14D',
+      'metallic green': '#1B5E20','dark green': '#006400','yellow green': '#9ACD32','olive drab': '#6B8E23',
+      'olive': '#808000','dark olive green': '#556B2F','dark sea green': '#8FBC8F','light sea green': '#20B2AA',
+      'dark cyan': '#008B8B','teal': '#008080','acid green': '#B0BF1A','aqua': '#00FFFF','cyan': '#00FFFF',
+      'matte cyan': '#00ACC1','metallic cyan': '#00838F','light cyan': '#E0FFFF','pale turquoise': '#AFEEEE',
+      'aquamarine': '#7FFFD4','turquoise': '#40E0D0','medium turquoise': '#48D1CC','dark turquoise': '#00CED1',
+      'zomp': '#39A78E','cadet blue': '#5F9EA0','steel blue': '#4682B4','light steel blue': '#B0C4DE',
+      'powder blue': '#B0E0E6','light blue': '#ADD8E6','sky blue': '#87CEEB','light sky blue': '#87CEFA','matte sky blue': '#7AAEC4',
+      'deep sky blue': '#00BFFF','dodger blue': '#1E90FF','cornflower blue': '#6495ED','matte turquoise': '#5FBDB1',
+      'medium slate blue': '#7B68EE','king blue': '#152A78','royal blue': '#4169E1','blue': '#0000FF',
+      'deep sea blue': '#015482','deep sea blue color': '#256794','matte blue': '#1976D2','metallic blue': '#0D47A1','medium blue': '#0000CD',
+      'dark blue': '#00008B','navy': '#000080','matte navy': '#283593','metallic navy': '#1A237E',
+      'midnight blue': '#191970','matte dark blue': '#0B0B60','brilliant blue': '#2752D6',
+      'air superiority blue': '#72A0C1','aero blue': '#C9FFE5','air force blue (raf)': '#5D8AA8',
+      'absolute zero': '#0048BA','aero': '#7CB9E8','zaffre': '#0014A8','lavender': '#E6E6FA',
+      'thistle': '#D8BFD8','plum': '#DDA0DD','violet': '#EE82EE','matte violet': '#8658A5','orchid': '#DA70D6',
+      'fuchsia': '#FF00FF','magenta': '#FF00FF','matte magenta': '#C2185B','metallic magenta': '#880E4F',
+      'medium orchid': '#BA55D3','medium purple': '#9370DB','rebecca purple': '#663399','blue violet': '#8A2BE2',
+      'dark violet': '#9400D3','dark orchid': '#9932CC','dark magenta': '#8B008B','purple': '#800080',
+      'matte purple': '#7B1FA2','metallic purple': '#4A148C','indigo': '#4B0082','slate blue': '#6A5ACD',
+      'dark slate blue': '#483D8B','burgundy': '#800020','matte burgundy': '#691C2D','glossy burgundy': '#800020',
+      'african violet': '#B284BE','cornsilk': '#FFF8DC','blanched almond': '#FFEBCD','bisque': '#FFE4C4',
+      'navajo white': '#FFDEAD','wheat': '#F5DEB3','burly wood': '#DEB887','tan': '#D2B48C',
+      'rosy brown': '#BC8F8F','sandy brown': '#F4A460','goldenrod': '#DAA520','dark goldenrod': '#B8860B',
+      'peru': '#CD853F','chocolate': '#D2691E','saddle brown': '#8B4513','sienna': '#A0522D',
+      'brown': '#A52A2A','matte brown': '#5D4037','metallic copper': '#D1793B','metallic brown': '#3E2723',
+      'maroon': '#800000','zinnwaldite brown': '#2C1608','white': '#F0F0F0','matte white': '#F0F0F0',
+      'metallic white': '#ECEFF1','snow': '#FFFAFA','honey dew': '#F0FFF0','mint cream': '#F5FFFA','mint': '#3EB489',
+      'azure': '#F0FFFF','alice blue': '#F0F8FF','ghost white': '#F8F8FF','white smoke': '#F5F5F5',
+      'sea shell': '#FFF5EE','beige': '#F5F5DC','old lace': '#FDF5E6','floral white': '#FFFAF0',
+      'ivory': '#FFFFF0','antique white': '#FAEBD7','linen': '#FAF0E6','lavender blush': '#FFF0F5',
+      'gainsboro': '#DCDCDC','light gray': '#D3D3D3','silver': '#C0C0C0','dark gray': '#A9A9A9',
+      'gray': '#808080','grey': '#808080','matte gray': '#757575','metallic gray': '#616161',
+      'silver gray metallic': '#8A92A6','dim gray': '#696969','lavender gray': '#C3C5C9',
+      'light slate gray': '#778899','slate gray': '#708090','dark slate gray': '#2F4F4F',
+      'black': '#000000','matte black': '#28282B','velvet black': '#171717','metallic black': '#424242',
+      'glossy cream': '#FFFDD0','light brown': '#C4A484','gold metallic': '#D4AF37',
+      'glossy sky blue': '#87CEEB','glossy light blue': '#87C1FF','electric bright sky blue': '#56DEFF'
+    };
+
+    const knownColorKeywords = new Set();
+    function initializeKnownColorKeywords() {
+      const basicColorWords = [
+        'red','orange','yellow','green','blue','purple','violet','pink','brown','black','white','gray','grey',
+        'cyan','magenta','teal','lime','olive','maroon','navy','aqua','fuchsia','silver','gold','khaki',
+        'coral','salmon','ivory','beige','azure','indigo','plum','orchid','thistle','sienna','peru','tan','wheat',
+        'cream','amber','bronze','copper','charcoal','cobalt','coffee','emerald','jade','lavender','lemon',
+        'lilac','mustard','ochre','peach','pearl','rose','ruby','sapphire','scarlet','taupe','turquoise','ultramarine','vermilion','viridian',
+        'mint','tree'
+      ];
+      const modifiers = [
+        'light','dark','deep','pale','medium','bright','soft','hot','sky','sea','spring','forest','electric',
+        'metallic','matte','glossy','powder','drab','chiffon','crimson','royal','slate','steel','smoke','ish','color'
+      ];
+      basicColorWords.forEach(w => knownColorKeywords.add(w));
+      modifiers.forEach(w => knownColorKeywords.add(w));
+      Object.keys(commonColorHexMap).forEach(key => {
+        key.toLowerCase().split(/[\s-]+/).forEach(word => { if (word) knownColorKeywords.add(word.replace(/[^a-z0-9]/g, '')); });
+      });
+    }
+    initializeKnownColorKeywords();
+
+    function isValidHex(hex) {
+      if (!hex) return false;
+      return /^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/.test(hex);
+    }
+
+    function showMessage(text, isError=false, duration=3000) {
+      messageBox.textContent = text;
+      messageBox.className = `mt-4 text-center text-sm font-medium ${isError ? 'text-red-400' : 'text-green-400'}`;
+      messageBox.classList.remove('hidden');
+      if (messageBox.timeoutId) clearTimeout(messageBox.timeoutId);
+      messageBox.timeoutId = setTimeout(() => { messageBox.classList.add('hidden'); messageBox.timeoutId = null; }, duration);
+    }
+
+    function showProcessingState(isProcessing) {
+      if (isProcessing) { submitButton.disabled = true; submitButton.classList.add('processing'); submitSpinner.classList.remove('hidden'); }
+      else { submitButton.disabled = false; submitButton.classList.remove('processing'); submitSpinner.classList.add('hidden'); }
+    }
+
+    async function copyToClipboard(textToCopy, buttonElement) {
+      const text = String(textToCopy || '');
+      if (!text) { showMessage('Nothing to copy.', true); return; }
+      const originalButtonClasses = buttonElement.className;
+      const originalText = buttonElement.textContent;
+      buttonElement.textContent = 'Copied!';
+      buttonElement.className = 'copy-btn copied';
+      let ok = false;
+
+      if (navigator.clipboard && window.isSecureContext) {
+        try { await navigator.clipboard.writeText(text); ok = true; } catch {}
+      }
+      if (!ok) {
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position='fixed'; ta.style.left='-9999px'; ta.style.top='-9999px';
+          document.body.appendChild(ta);
+          ta.focus(); ta.select();
+          ok = document.execCommand('copy');
+          document.body.removeChild(ta);
+        } catch {
+          showMessage('Failed to copy text. Clipboard access might be blocked.', true, 4000);
+          buttonElement.textContent = originalText; buttonElement.className = originalButtonClasses;
+          return;
+        }
+      }
+      if (ok) {
+        if (buttonElement.timeoutId) clearTimeout(buttonElement.timeoutId);
+        buttonElement.timeoutId = setTimeout(() => { buttonElement.textContent = originalText; buttonElement.className = originalButtonClasses; buttonElement.timeoutId = null; }, 1500);
+      }
+    }
+
+    function extractHexCode(text) {
+      if (!text) return null;
+      const hexRegex = /#([A-Fa-f0-9]{6})\b/g;
+      const match = hexRegex.exec(text);
+      return match ? match[0] : null;
+    }
+
+    function parseColorValue(colorValue) {
+      if (!colorValue) return { descriptive: null, hex: null };
+      const ignorePattern = /^(?:Please\s+)?(?:ignore|ingnore)\s+this\s+color(?:\s+and(?:\s+select(?:\s+(?:fron|front|from))?)?)?.*$/i;
+      let workingString = colorValue.replace(ignorePattern, '').trim();
+      const extractedHex = extractHexCode(workingString);
+      let descriptivePart = workingString;
+      if (extractedHex) {
+        const hexPatternForRemoval = new RegExp(`\\s*\\(?\\s*${extractedHex.replace('#', '\\#')}\\s*\\)?`, 'gi');
+        descriptivePart = descriptivePart.replace(hexPatternForRemoval, ' ').trim();
+      }
+      descriptivePart = cleanColorNameForDisplay(descriptivePart);
+      return { descriptive: descriptivePart || null, hex: extractedHex };
+    }
+
+    function cleanColorNameForDisplay(colorName) {
+      if (!colorName) return "";
+      let cleaned = String(colorName);
+      cleaned = cleaned.replace(/\s*\([^)]*\)?\s*/g, ' ');
+      cleaned = cleaned.replace(/\s*\[[^\]]*\]?\s*/g, ' ');
+      cleaned = cleaned.replace(/#\s*[A-Fa-f0-9]+/gi, ' ');
+      cleaned = cleaned.replace(/([a-zA-Z]+)(\d+)/g, '$1 $2');
+      cleaned = cleaned.replace(/(\d+)([a-zA-Z]+)/g, '$1 $2');
+
+      const words = cleaned.split(/\s+/);
+      const significantWords = [];
+      for (const word of words) {
+        if (!word) continue;
+        const lowerWord = word.toLowerCase().replace(/[^a-z0-9-]/g, '');
+        if (knownColorKeywords.has(lowerWord)) {
+          significantWords.push(word.replace(/[^a-zA-Z0-9-]/g, ''));
+        } else if (word.includes('-')) {
+          const parts = word.split('-');
+          if (parts.every(p => knownColorKeywords.has(p.toLowerCase().replace(/[^a-z0-9]/g, '')) || p === "")) {
+            significantWords.push(word.replace(/[^a-zA-Z0-9-]/g, ''));
+          }
+        }
+      }
+      cleaned = significantWords.join(" ").replace(/\s+/g, ' ').trim();
+      if (cleaned) {
+        cleaned = cleaned.split(' ').map(w => (w.toUpperCase() === 'SC' || w.toUpperCase() === 'ITC') ? w.toUpperCase() : (w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())).join(' ');
+      }
+      return cleaned;
+    }
+
+    function cleanColorNameForFilename(colorName) {
+      if (!colorName) return "";
+      let cleaned = colorName.replace(/\s*\([^)]*\)\s*/g, '');
+      cleaned = cleaned.replace(/#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})\b/gi, '');
+      cleaned = cleaned.replace(/[^a-zA-Z0-9\s-]/g, '');
+      cleaned = cleaned.replace(/\s+/g, ' ').trim();
+      return cleaned;
+    }
+
+    function getCanonicalColorName(colorName) {
+      if (!colorName) return "";
+      const cleaned = cleanColorNameForDisplay(colorName).toLowerCase();
+      return cleaned.split(/\s+/).filter(Boolean).sort().join(" ");
+    }
+
+    function formatSizeForDisplayAndFilename(rawSizeString) {
+      if (!rawSizeString) return { display: null, filenamePart: "" };
+      let mainSizeString = rawSizeString.replace(/Option to Add Complimentary Free Squeegee/gi, "").trim();
+      const foundDimensions = [];
+      const dimensionRegexGlobal = /(\d+\.?\d*)\s*("|\u201D|inch(?:es)?)(?:\s*\(\s*([^)]+?)\s*\)|(?:\s+(height|length|width|h|l|w|long))?)?/gi;
+      let match;
+      while ((match = dimensionRegexGlobal.exec(mainSizeString)) !== null) {
+        let value = match[1];
+        let type = null;
+        const contentInParens = match[3];
+        const standaloneTypeWord = match[4];
+        let typeCandidateRaw = "";
+        if (contentInParens) typeCandidateRaw = contentInParens;
+        else if (standaloneTypeWord) typeCandidateRaw = standaloneTypeWord;
+
+        if (typeCandidateRaw) {
+          let t = typeCandidateRaw.toLowerCase().replace(/[^a-z]/g, '');
+          if (t.includes("len") || t === "l" || t === "long") type = 'L';
+          else if (t.includes("hei") || t === "h") type = 'H';
+          else if (t.includes("wid") || t === "w") type = 'W';
+        }
+        if (type === 'H') {
+          const numValue = parseFloat(value);
+          if (numValue > 7 && (numValue % 11 === 0)) value = String(value.charAt(0));
+        }
+        foundDimensions.push({ value, unit: "INCH", type });
+      }
+
+      let lengthDim = foundDimensions.find(d => d.type === 'L');
+      let heightDim = foundDimensions.find(d => d.type === 'H');
+      let widthDim = foundDimensions.find(d => d.type === 'W');
+      const untypedDims = foundDimensions.filter(d => d.type === null && d.value);
+      if (untypedDims.length > 0) {
+        if (!lengthDim && untypedDims.length > 0) { lengthDim = untypedDims.shift(); if (lengthDim) lengthDim.type = 'L'; }
+        if (!heightDim && untypedDims.length > 0) { heightDim = untypedDims.shift(); if (heightDim) heightDim.type = 'H'; }
+        if (!widthDim && untypedDims.length > 0) { widthDim = untypedDims.shift(); if (widthDim) widthDim.type = 'W'; }
+      }
+
+      const displayParts = [];
+      if (lengthDim) displayParts.push(`${lengthDim.value} ${lengthDim.unit} ${lengthDim.type}`);
+      if (widthDim) displayParts.push(`${widthDim.value} ${lengthDim.unit} ${lengthDim.type}`);
+      if (heightDim) displayParts.push(`${heightDim.value} ${lengthDim.unit} ${heightDim.type}`);
+
+      if (displayParts.length > 0) {
+        const finalDisplay = displayParts.join(' ');
+        return { display: finalDisplay, filenamePart: finalDisplay };
+      } else {
+        let fallbackDisplay = mainSizeString.replace(/\s*\([^)]*\)\s*/g, ' ').trim();
+        fallbackDisplay = fallbackDisplay.replace(/\bINCHES\b/gi, 'INCH').replace(/\s*("|\u201D)\s*/g, ' INCH ').trim();
+        fallbackDisplay = fallbackDisplay.replace(/[^a-zA-Z0-9\s.-]/g, ' ').replace(/\s+/g, ' ').trim();
+        let fallbackFilenamePart = fallbackDisplay;
+        if (/\b(length|long)\b/i.test(fallbackFilenamePart) && !fallbackFilenamePart.includes(" L")) {
+          fallbackFilenamePart = fallbackFilenamePart.replace(/\b(length|long)\b/gi, 'L');
+        }
+        if (/\bheight\b/i.test(fallbackFilenamePart) && !fallbackFilenamePart.includes(" H")) {
+          fallbackFilenamePart = fallbackFilenamePart.replace(/\bheight\b/gi, 'H');
+        }
+        if (/\bwidth\b/i.test(fallbackFilenamePart) && !fallbackFilenamePart.includes(" W")) {
+          fallbackFilenamePart = fallbackFilenamePart.replace(/\bwidth\b/gi, 'W');
+        }
+        fallbackFilenamePart = fallbackFilenamePart.replace(/\bINCH\b/gi, 'INCH');
+        return { display: fallbackDisplay.trim() || null, filenamePart: fallbackFilenamePart.trim() || "" };
+      }
+    }
+
+    function sanitizeForFilename(filenamePart) {
+      if (!filenamePart) return "";
+      return filenamePart.replace(/[<>:"/\\|?*\x00-\x1F]/g, '');
+    }
+
+    function updateGeneratedFilenameDisplay() {
+      let customTextPart = currentProcessedData.customText || "NoText";
+      let tcFilenamePart = cleanColorNameForFilename(currentProcessedData.textColorDescriptive);
+      let tocFilenamePart = "";
+      if (currentProcessedData.originalInputText &&
+        (currentProcessedData.originalInputText.toLowerCase().includes("text outline color:") || currentProcessedData.originalInputText.toLowerCase().includes("outline colors:")) ||
+        (currentProcessedData.outlineColorDescriptive && currentProcessedData.outlineColorDescriptive.trim() !== "")
+      ) {
+        tocFilenamePart = cleanColorNameForFilename(currentProcessedData.outlineColorDescriptive);
+      }
+      let sizeForFilename = currentFilenameSizePart || "";
+      let skuForFilename = currentProcessedData.sku || "NoSKU";
+
+      const tcPart = tcFilenamePart ? `(TC-${tcFilenamePart})` : "";
+      const tocPart = tocFilenamePart ? `(TOC-${tocFilenamePart})` : "";
+      const sizePart = sizeForFilename ? `(S-${sizeForFilename})` : "";
+      const skuPart = `(${skuForFilename})`;
+      const assembledFilename = `${customTextPart}${tcPart}${tocPart}${sizePart}${skuPart}`;
+      const generatedFilename = sanitizeForFilename(assembledFilename);
+      filenameOutputDiv.textContent = generatedFilename;
+      filenameOutputDiv.dataset.originalFilename = generatedFilename;
+    }
+
+    function toggleValueEdit(valueSpan, button, dataKey, label) {
+      const editSvg = button.querySelector('svg:first-child');
+      const saveSvg = button.querySelector('svg:last-child');
+
+      if (valueSpan.contentEditable === "true") {
+        valueSpan.contentEditable = "false";
+        saveSvg.classList.add('hidden');
+        editSvg.classList.remove('hidden');
+        button.title = `Edit ${label}`;
+        valueSpan.classList.remove('focus:ring-2','focus:ring-indigo-400','bg-slate-700','needs-review','suggested-invalid-hex');
+
+        const newValue = valueSpan.textContent.trim();
+        currentProcessedData[dataKey] = newValue;
+
+        if (dataKey === 'size') {
+          const parsedSizeInfo = formatSizeForDisplayAndFilename(newValue);
+          currentProcessedData.size = parsedSizeInfo.display;
+          currentFilenameSizePart = parsedSizeInfo.filenamePart;
+        } else if (dataKey === 'textColorDescriptive') {
+          currentProcessedData.textColorHex = 'loading';
+          refreshOutputDisplay();
+          fetchHexCodesAsync(true);
+        } else if (dataKey === 'outlineColorDescriptive') {
+          currentProcessedData.outlineColorHex = 'loading';
+          refreshOutputDisplay();
+          fetchHexCodesAsync(false, true);
+        } else if (dataKey === 'textColorHex') {
+          currentProcessedData.textColorHex = newValue;
+        } else if (dataKey === 'outlineColorHex') {
+          currentProcessedData.outlineColorHex = newValue;
+        }
+
+        refreshOutputDisplay();
+        showMessage(`${label} updated.`, false, 1500);
+      } else {
+        valueSpan.dataset.originalValue = valueSpan.textContent;
+        valueSpan.contentEditable = "true";
+        editSvg.classList.add('hidden');
+        saveSvg.classList.remove('hidden');
+        button.title = `Save ${label}`;
+        valueSpan.classList.add('focus:ring-2','focus:ring-indigo-400','bg-slate-700');
+        valueSpan.focus();
+        const range = document.createRange();
+        range.selectNodeContents(valueSpan);
+        const sel = window.getSelection();
+        sel.removeAllRanges(); sel.addRange(range);
+      }
+    }
+
+    function createOutputRow(label, value, dataKey, copyValue = null, needsReview = false, descriptiveColorForSearch = null) {
+      if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) return null;
+
+      const finalCopyValue = (copyValue !== null && copyValue !== undefined) ? String(copyValue) : String(value);
+      const div = document.createElement('div');
+      div.className = 'output-item border-b border-slate-700';
+
+      const labelSpan = document.createElement('span');
+      labelSpan.className = 'output-label text-slate-400';
+      labelSpan.textContent = label + ':';
+      div.appendChild(labelSpan);
+
+      const valueSpan = document.createElement('span');
+      valueSpan.className = 'output-value text-slate-100 flex-grow';
+      if (label.includes("Hex Code")) {
+        if (needsReview) valueSpan.classList.add('suggested-invalid-hex');
+      } else if (needsReview) {
+        valueSpan.classList.add('needs-review');
+      }
+
+      if (value === 'loading') {
+        const spinner = document.createElement('div');
+        spinner.className = 'hex-loader';
+        valueSpan.appendChild(spinner);
+        const txt = document.createElement('span');
+        txt.textContent = ' Generating...';
+        valueSpan.appendChild(txt);
+      } else {
+        valueSpan.textContent = String(value);
+      }
+      valueSpan.dataset.originalValue = valueSpan.textContent;
+      div.appendChild(valueSpan);
+
+      const buttonsWrapper = document.createElement('div');
+      buttonsWrapper.className = 'flex items-center flex-shrink-0';
+
+      if (label.includes("Hex Code")) {
+        const searchButton = document.createElement('button');
+        searchButton.className = 'search-btn p-1 bg-slate-600 text-slate-200 hover:bg-slate-500';
+        searchButton.title = `Search again for ${descriptiveColorForSearch}`;
+        searchButton.innerHTML = `<svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd" /></svg>`;
+        searchButton.onclick = () => forceFetchHexCode(descriptiveColorForSearch, dataKey);
+        buttonsWrapper.appendChild(searchButton);
+      }
+
+      const editButton = document.createElement('button');
+      editButton.className = 'edit-btn p-1 bg-slate-600 text-slate-200 hover:bg-slate-500';
+      editButton.title = `Edit ${label}`;
+      editButton.innerHTML = `
+        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" /></svg>
+        <svg class="btn-icon hidden" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 01-1.05-.143z" clip-rule="evenodd" /></svg>`;
+      editButton.onclick = () => toggleValueEdit(valueSpan, editButton, dataKey, label);
+      buttonsWrapper.appendChild(editButton);
+
+      const copyButton = document.createElement('button');
+      copyButton.textContent = 'Copy';
+      copyButton.className = 'copy-btn bg-slate-600 text-slate-200 hover:bg-slate-500';
+      copyButton.onclick = () => copyToClipboard(finalCopyValue, copyButton);
+      buttonsWrapper.appendChild(copyButton);
+
+      div.appendChild(buttonsWrapper);
+      return div;
+    }
+
+    function refreshOutputDisplay() {
+      extractedInfoDiv.innerHTML = '';
+      let hasOutput = false;
+      let customTextNeedsReviewForDisplay = false;
+      const { textColorDescriptive, textColorHex, outlineColorDescriptive, outlineColorHex, originalInputText, sku, fontStyle, customText, size } = currentProcessedData;
+      const outlineLabelPresentInInput = originalInputText && (originalInputText.toLowerCase().includes("text outline color:") || originalInputText.toLowerCase().includes("outline colors:"));
+
+      function addRow(label, value, dataKey, copyValue = null, needsReviewFlag = false, descriptiveColorForSearch = null) {
+        const row = createOutputRow(label, value, dataKey, copyValue, needsReviewFlag, descriptiveColorForSearch);
+        if (row) { extractedInfoDiv.appendChild(row); hasOutput = true; }
+      }
+
+      addRow('SKU', sku, 'sku', sku, sku === "NoSKU");
+      addRow('Font Style', fontStyle, 'fontStyle', fontStyle);
+
+      if (customText) {
+        const multipleSpacesRegex = /\s{2,}/;
+        const singleLettersRegex = /(?:\b[A-Z]\s){2,}[A-Z]\b/;
+        if (multipleSpacesRegex.test(customText) || singleLettersRegex.test(customText)) {
+          customTextNeedsReviewForDisplay = true;
+        }
+      }
+      addRow('Your custom text', customText, 'customText', customText, customTextNeedsReviewForDisplay);
+
+      addRow('Text Color', textColorDescriptive, 'textColorDescriptive', textColorDescriptive);
+      if (textColorHex !== null && textColorDescriptive?.toLowerCase() !== 'black') {
+        addRow('Text Hex Code', textColorHex, 'textColorHex', textColorHex, !isValidHex(textColorHex) && textColorHex !== 'loading', textColorDescriptive);
+      }
+
+      if (outlineLabelPresentInInput) {
+        addRow('Text Outline Color', outlineColorDescriptive, 'outlineColorDescriptive', outlineColorDescriptive);
+        if (outlineColorHex !== null && outlineColorDescriptive?.toLowerCase() !== 'black') {
+          addRow('Text Outline Hex Code', outlineColorHex, 'outlineColorHex', outlineColorHex, !isValidHex(outlineColorHex) && outlineColorHex !== 'loading', outlineColorDescriptive);
+        }
+      }
+      addRow('Size', size, 'size', size);
+
+      const fieldsWithIssues = [];
+      if (selectedFile) {
+        if (sku === "NoSKU") fieldsWithIssues.push("SKU");
+        if (!fontStyle) fieldsWithIssues.push("Font Style");
+        if (!customText || customTextNeedsReviewForDisplay) {
+          if (!fieldsWithIssues.includes("Custom Text")) fieldsWithIssues.push("Custom Text");
+        }
+        if (originalInputText.toLowerCase().includes("text color:") || originalInputText.toLowerCase().includes("colors:")) {
+          if (!textColorDescriptive) fieldsWithIssues.push("Text Color Name");
+          if (!isValidHex(textColorHex) && textColorDescriptive?.toLowerCase() !== 'black') fieldsWithIssues.push("Text Hex Code");
+        }
+        if (outlineLabelPresentInInput) {
+          if (!outlineColorDescriptive) fieldsWithIssues.push("Outline Color Name");
+          if (!isValidHex(outlineColorHex) && outlineColorDescriptive?.toLowerCase() !== 'black') fieldsWithIssues.push("Outline Hex Code");
+        }
+        const hasLength = size && size.includes(" L");
+        const hasHeight = size && size.includes(" H");
+        if (originalInputText.toLowerCase().includes("size:") && (!size || !(hasLength && hasHeight))) {
+          fieldsWithIssues.push("Size");
+        }
+        if (fieldsWithIssues.length > 0) {
+          ocrWarningStar.classList.remove('hidden');
+          ocrWarningHint.textContent = `Check: ${fieldsWithIssues.join(', ')}`;
+        } else {
+          ocrWarningStar.classList.add('hidden');
+          ocrWarningHint.textContent = '';
+        }
+      }
+
+      if (!hasOutput && fieldsWithIssues.length === 0) {
+        const noDataMsg = document.createElement('p');
+        noDataMsg.textContent = 'No relevant information could be extracted.';
+        noDataMsg.className = 'text-slate-400 italic p-2';
+        extractedInfoDiv.appendChild(noDataMsg);
+      } else if (!hasOutput && fieldsWithIssues.length > 0) {
+        const noDataMsg = document.createElement('p');
+        noDataMsg.textContent = 'Could not extract all expected fields. Please verify.';
+        noDataMsg.className = 'text-slate-400 italic p-2';
+        extractedInfoDiv.appendChild(noDataMsg);
+      }
+
+      updateGeneratedFilenameDisplay();
+    }
+
+    function parseSkuAndSizeFromText(inputText) {
+      const lines = (inputText || '').split('\n');
+      let sku = null;
+      let rawSize = null;
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        if (trimmed.toLowerCase().startsWith("sku:")) sku = trimmed.substring(4).trim();
+        if (trimmed.toLowerCase().startsWith("size:")) rawSize = trimmed.substring(5).trim();
+      }
+      if (sku) {
+        sku = sku.replace(/_/g, '-');
+        if (sku === "SC-MTO-25") { sku = "SC-MСТО-25"; }
+      }
+      let sizeDisplay = null;
+      let sizeFilename = "";
+      if (rawSize) {
+        const parsedSize = formatSizeForDisplayAndFilename(rawSize);
+        sizeDisplay = parsedSize.display;
+        sizeFilename = parsedSize.filenamePart;
+      }
+      return { sku: sku || null, sizeDisplay, sizeFilename };
+    }
+
+    function processInputText(inputText) {
+      if (!inputText || !inputText.trim()) {
+        showMessage('Input text is empty after OCR or initial input.', true);
+        outputSection.classList.add('hidden');
+        ocrWarningStar.classList.add('hidden');
+        ocrWarningHint.textContent = '';
+        return;
+      }
+
+      outputSection.classList.add('hidden');
+      ocrWarningStar.classList.add('hidden');
+      ocrWarningHint.textContent = '';
+
+      const lines = inputText.split('\n');
+      const rawValues = {};
+      const keyMap = {
+        "SKU:": "sku",
+        "Font Style:": "fontStyle",
+        "Your custom text:": "customText",
+        "Text Color:": "textColorFull",
+        "Colors:": "textColorFull",
+        "Text Outline Color:": "outlineColorFull",
+        "Outline Colors:": "outlineColorFull",
+        "Size:": "size"
+      };
+      const noiseLines = ["Customizations:", "Surface 1:"];
+
+      for (const line of lines) {
+        const trimmedLine = line.trim();
+        if (!trimmedLine) continue;
+        if (noiseLines.some(noise => trimmedLine.startsWith(noise))) continue;
+
+        for (const key in keyMap) {
+          if (trimmedLine.toLowerCase().startsWith(key.toLowerCase())) {
+            const value = trimmedLine.substring(key.length).trim();
+            rawValues[keyMap[key]] = value;
+            break;
+          }
+        }
+      }
+
+      let processedSku = rawValues.sku || "NoSKU";
+      if (processedSku !== "NoSKU") {
+        processedSku = processedSku.replace(/_/g, '-');
+        if (processedSku === "SC-MTO-25") processedSku = "SC-MСТО-25";
+      }
+
+      const textColorParsed = parseColorValue(rawValues.textColorFull);
+      const outlineColorParsed = parseColorValue(rawValues.outlineColorFull);
+
+      let displaySize = null;
+      let filenameSizeForPart = "";
+      if (rawValues.size) {
+        const parsedSizeInfo = formatSizeForDisplayAndFilename(rawValues.size);
+        displaySize = parsedSizeInfo.display;
+        filenameSizeForPart = parsedSizeInfo.filenamePart;
+      }
+
+      currentProcessedData = {
+        sku: processedSku,
+        fontStyle: rawValues.fontStyle || null,
+        customText: rawValues.customText || null,
+        textColorDescriptive: textColorParsed.descriptive,
+        textColorHex: textColorParsed.hex || 'loading',
+        outlineColorDescriptive: outlineColorParsed.descriptive,
+        outlineColorHex: (rawValues.outlineColorFull) ? (outlineColorParsed.hex || 'loading') : null,
+        size: displaySize,
+        originalInputText: inputText
+      };
+      currentFilenameSizePart = filenameSizeForPart;
+
+      refreshOutputDisplay();
+
+      if (extractedInfoDiv.hasChildNodes() || filenameOutputDiv.textContent.trim() !== "") {
+        outputSection.classList.remove('hidden');
+        outputSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (selectedFile) imagePreviewSection.classList.remove('hidden');
+        hasProcessedOnce = true;
+        fetchHexCodesAsync(textColorParsed.hex === null, (rawValues.outlineColorFull && outlineColorParsed.hex === null));
+      } else {
+        showMessage('No data to display after processing.', true);
+        imagePreviewSection.classList.add('hidden');
+      }
+    }
+
+    function imageToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const base64String = event.target.result.split(',')[1];
+          resolve(base64String);
+        };
+        reader.onerror = (error) => {
+          console.error("Error reading file:", error);
+          showMessage("Failed to read image file.", true);
+          reject(error);
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function handleFileSelect(file) {
+      if (file && file.type.startsWith('image/')) {
+        if (hasProcessedOnce) resetForm();
+        selectedFile = file;
+        fileNameSpan.textContent = file.name;
+        dataInput.value = '';
+        imageInput.files = createFileList(file);
+        const reader = new FileReader();
+        reader.onload = function(e){ previewImageElement.src = e.target.result; }
+        reader.readAsDataURL(file);
+        if (!submitButton.disabled) submitButton.click();
+      } else {
+        showMessage('Please select or drop an image file.', true);
+      }
+    }
+
+    function createFileList(file) {
+      const dataTransfer = new DataTransfer(); dataTransfer.items.add(file); return dataTransfer.files;
+    }
+
+    function resetForm() {
+      dataInput.value = '';
+      outputSection.classList.add('hidden'); extractedInfoDiv.innerHTML = '';
+      filenameOutputDiv.textContent = '';
+      filenameOutputDiv.classList.remove('text-red-400','italic');
+      filenameOutputDiv.classList.add('text-slate-200');
+      filenameOutputDiv.contentEditable = "false";
+      editIcon.classList.remove('hidden'); saveIcon.classList.add('hidden');
+      editFilenameButton.title = "Edit Filename";
+      imageInput.value = ''; selectedFile = null; fileNameSpan.textContent = 'No file chosen';
+      ocrWarningStar.classList.add('hidden'); ocrWarningHint.textContent = '';
+      imagePreviewSection.classList.add('hidden'); previewImageElement.src = "#";
+      usedOcrEngines.clear(); ocrSourceDisplay.textContent = '';
+      showMessage('Form reset.');
+      hasProcessedOnce = false; currentProcessedData = {}; currentFilenameSizePart = "";
+    }
+
+    pasteButton.addEventListener('click', async () => {
+      if (navigator.clipboard && navigator.clipboard.readText && window.isSecureContext) {
+        try {
+          const text = await navigator.clipboard.readText();
+          dataInput.value = text;
+          imageInput.value = '';
+          selectedFile = null;
+          fileNameSpan.textContent = 'No file chosen';
+          showMessage('Text pasted successfully! Starting extraction...', false, 2000);
+          hasProcessedOnce = false;
+          ocrWarningStar.classList.add('hidden');
+          ocrWarningHint.textContent = '';
+          imagePreviewSection.classList.add('hidden');
+          previewImageElement.src = "#";
+          if (!submitButton.disabled) submitButton.click();
+        } catch (err) {
+          console.error('Clipboard read failed: ', err);
+          showMessage('Auto-paste failed. Please paste manually.', true, 4000);
+        }
+      } else {
+        showMessage('Clipboard paste not available/supported (requires HTTPS).', true, 4000);
+      }
+    });
+
+    imageInput.addEventListener('change', (event) => handleFileSelect(event.target.files[0]));
+
+    // Drop zone-only handlers (stop propagation so global handler doesn't double-handle)
+    dropZone.addEventListener('dragover', (e)=>{
+      e.preventDefault(); e.stopPropagation();
+      dropZone.classList.add('dragover','bg-blue-900/60','border-blue-500');
+      dropZone.classList.remove('bg-slate-700','border-slate-600');
+    });
+    dropZone.addEventListener('dragleave', (e)=>{
+      e.preventDefault(); e.stopPropagation();
+      dropZone.classList.remove('dragover','bg-blue-900/60','border-blue-500');
+      dropZone.classList.add('bg-slate-700','border-slate-600');
+    });
+    dropZone.addEventListener('drop', (e)=>{
+      e.preventDefault(); e.stopPropagation();
+      dropZone.classList.remove('dragover','bg-blue-900/60','border-blue-500');
+      dropZone.classList.add('bg-slate-700','border-slate-600');
+      if (e.dataTransfer?.items) {
+        if (e.dataTransfer.items.length === 1 && e.dataTransfer.items[0].kind === 'file') {
+          const file = e.dataTransfer.items[0].getAsFile();
+          if (file && file.type.startsWith('image/')) handleFileSelect(file); else showMessage('Please drop an image file.', true);
+        } else if (e.dataTransfer.items.length > 1) showMessage('Please drop only one image file.', true);
+        else showMessage('Please drop an image file.', true);
+      } else if (e.dataTransfer?.files) {
+        if (e.dataTransfer.files.length === 1 && e.dataTransfer.files[0].type.startsWith('image/')) handleFileSelect(e.dataTransfer.files[0]);
+        else if (e.dataTransfer.files.length > 1) showMessage('Please drop only one image file.', true);
+        else showMessage('Please drop an image file.', true);
+      }
+    });
+
+    // Global drag-and-drop so you can drop anywhere on the page
+    let dndHoverCount = 0;
+    function highlightDropZone(on) {
+      if (on) {
+        dropZone.classList.add('dragover','bg-blue-900/60','border-blue-500');
+        dropZone.classList.remove('bg-slate-700','border-slate-600');
+      } else {
+        dropZone.classList.remove('dragover','bg-blue-900/60','border-blue-500');
+        dropZone.classList.add('bg-slate-700','border-slate-600');
+      }
+    }
+    window.addEventListener('dragenter', (e) => { dndHoverCount++; highlightDropZone(true); }, false);
+    window.addEventListener('dragleave', (e) => { dndHoverCount = Math.max(0, dndHoverCount - 1); if (dndHoverCount === 0) highlightDropZone(false); }, false);
+    window.addEventListener('dragover', (e) => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; highlightDropZone(true); }, false);
+    window.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dndHoverCount = 0;
+      highlightDropZone(false);
+      const dt = e.dataTransfer;
+      let file = null;
+      if (dt?.items && dt.items.length > 0) {
+        for (const item of dt.items) {
+          if (item.kind === 'file') {
+            const f = item.getAsFile();
+            if (f && f.type && f.type.startsWith('image/')) { file = f; break; }
+          }
+        }
+      } else if (dt?.files && dt.files.length > 0) {
+        const f = dt.files[0];
+        if (f && f.type && f.type.startsWith('image/')) file = f;
+      }
+      if (file) {
+        handleFileSelect(file);
+      } else {
+        showMessage('Please drop a single image file.', true);
+      }
+    }, false);
+
+    function updateOcrSourceDisplay() {
+      if (usedOcrEngines.size === 0) { ocrSourceDisplay.textContent = ''; return; }
+      const sources = Array.from(usedOcrEngines).join(' & ');
+      ocrSourceDisplay.textContent = `By ${sources}`;
+    }
+
+    async function runTesseractOcr(imageFile) {
+      const worker = await Tesseract.createWorker('eng+rus', 1, {
+        logger: m => {
+          if (m.status === 'recognizing text') {
+            const progress = (m.progress * 100).toFixed(0);
+            showMessage(`Tesseract: Recognizing text... ${progress}%`, false, 20000);
+          }
+        },
+      });
+      const { data: { text } } = await worker.recognize(imageFile);
+      await worker.terminate();
+      return text;
+    }
+
+    async function callBackendGeminiOcr(base64ImageData, mimeType) {
+      if (!BASE_API_URL || BASE_API_URL.includes("REPLACE_WITH_YOUR_WORKER_URL")) throw new Error("Backend URL not configured");
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      try {
+        const res = await fetch(`${BASE_API_URL}/api/ocr`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageBase64: base64ImageData, mimeType }),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        if (!res.ok) throw new Error(`Backend OCR error: ${res.status}`);
+        const data = await res.json();
+        return data?.text || '';
+      } catch (err) {
+        clearTimeout(timeoutId);
+        throw err;
+      }
+    }
+
+    async function handleSubmitImage(imageFile) {
+      showProcessingState(true);
+      showMessage('Processing image... this may take a moment.', false, 20000);
+
+      try {
+        const base64 = await imageToBase64(imageFile);
+        // Run OCRs in parallel
+        const tesseractPromise = runTesseractOcr(imageFile).then(txt => ({ ok: true, engine: 'Tesseract', txt })).catch(e => ({ ok: false, engine: 'Tesseract', err: e }));
+        const geminiPromise = callBackendGeminiOcr(base64, imageFile.type).then(txt => ({ ok: true, engine: 'Gemini', txt })).catch(e => ({ ok: false, engine: 'Gemini', err: e }));
+
+        const [tessRes, gemRes] = await Promise.allSettled([tesseractPromise, geminiPromise]);
+        let gem = null, tess = null;
+
+        if (tessRes.status === 'fulfilled') tess = tessRes.value;
+        if (gemRes.status === 'fulfilled') gem = gemRes.value;
+
+        let baseText = '';
+        if (gem?.ok && gem.txt) { baseText = gem.txt; usedOcrEngines.add('Gemini'); }
+        else if (tess?.ok && tess.txt) { baseText = tess.txt; usedOcrEngines.add('Tesseract'); }
+
+        processInputText(baseText);
+
+        // If both succeeded, prefer Tesseract for SKU and Size
+        if (gem?.ok && tess?.ok && tess.txt) {
+          usedOcrEngines.add('Tesseract');
+          const patch = parseSkuAndSizeFromText(tess.txt);
+          if (patch.sku) currentProcessedData.sku = patch.sku;
+          if (patch.sizeDisplay) currentProcessedData.size = patch.sizeDisplay;
+          if (patch.sizeFilename) currentFilenameSizePart = patch.sizeFilename;
+          refreshOutputDisplay();
+        }
+
+        updateOcrSourceDisplay();
+      } catch (e) {
+        showMessage(`OCR Failed: ${e?.message || 'Unknown error'}`, true, 5000);
+      } finally {
+        showProcessingState(false);
+      }
+    }
+
+    submitButton.addEventListener('click', async () => {
+      if (submitButton.disabled) return;
+      const inputText = dataInput.value;
+      const imageFile = selectedFile;
+
+      if (inputText.trim()) {
+        ocrWarningStar.classList.add('hidden');
+        ocrWarningHint.textContent = '';
+        imagePreviewSection.classList.add('hidden');
+        previewImageElement.src = "#";
+        processInputText(inputText);
+      } else if (imageFile) {
+        handleSubmitImage(imageFile);
+      } else {
+        showMessage('Please paste text or upload an image first.', true);
+        outputSection.classList.add('hidden');
+        ocrWarningStar.classList.add('hidden');
+        ocrWarningHint.textContent = '';
+        imagePreviewSection.classList.add('hidden');
+        previewImageElement.src = "#";
+      }
+    });
+
+    editFilenameButton.addEventListener('click', () => {
+      if (filenameOutputDiv.contentEditable === "true") {
+        filenameOutputDiv.contentEditable = "false";
+        saveIcon.classList.add('hidden'); editIcon.classList.remove('hidden');
+        editFilenameButton.title = "Edit Filename";
+        filenameOutputDiv.classList.remove('focus:ring-2','focus:ring-indigo-400','bg-slate-700');
+        showMessage('Filename saved.', false, 1500);
+      } else {
+        filenameOutputDiv.contentEditable = "true";
+        editIcon.classList.add('hidden'); saveIcon.classList.remove('hidden');
+        editFilenameButton.title = "Save Filename";
+        filenameOutputDiv.classList.add('focus:ring-2','focus:ring-indigo-400','bg-slate-700');
+        filenameOutputDiv.focus();
+        const range = document.createRange(); range.selectNodeContents(filenameOutputDiv);
+        const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+      }
+    });
+
+    copyFilenameButton.addEventListener('click', () => {
+      const filenameToCopy = filenameOutputDiv.textContent;
+      if (!filenameToCopy.startsWith("Error")) copyToClipboard(filenameToCopy, copyFilenameButton);
+      else showMessage('Cannot copy error message.', true);
+    });
+
+    pageTitle.addEventListener('click', resetForm);
+
+    document.addEventListener('keydown', (event) => {
+      const activeElement = document.activeElement;
+      const tag = activeElement ? activeElement.tagName.toLowerCase() : '';
+      const isEditingFilename = filenameOutputDiv.contentEditable === "true";
+      const isEditingOutputValue = activeElement && activeElement.classList.contains('output-value') && activeElement.contentEditable === "true";
+      const isTypingArea = tag === 'textarea' || tag === 'input' || (activeElement && activeElement.isContentEditable && !isEditingFilename && !isEditingOutputValue);
+
+      if (event.key === 'Enter') {
+        if (isEditingFilename) { event.preventDefault(); editFilenameButton.click(); }
+        else if (isEditingOutputValue) {
+          event.preventDefault();
+          const editBtn = activeElement.closest('.output-item').querySelector('.edit-btn');
+          if (editBtn) editBtn.click();
+        } else if (!isTypingArea && tag !== 'button' && !submitButton.disabled) {
+          event.preventDefault(); submitButton.click();
+        }
+      } else if (event.key === 'Backspace' && !isTypingArea && !isEditingFilename && !isEditingOutputValue) {
+        event.preventDefault(); resetForm();
+      } else if (event.key === 'Escape') {
+        if (isEditingFilename) {
+          filenameOutputDiv.textContent = filenameOutputDiv.dataset.originalFilename || filenameOutputDiv.textContent;
+          filenameOutputDiv.contentEditable = "false";
+          saveIcon.classList.add('hidden'); editIcon.classList.remove('hidden');
+          editFilenameButton.title = "Edit Filename";
+          filenameOutputDiv.classList.remove('focus:ring-2','focus:ring-indigo-400','bg-slate-700');
+        } else if (isEditingOutputValue) {
+          const editBtn = activeElement.closest('.output-item').querySelector('.edit-btn');
+          activeElement.textContent = activeElement.dataset.originalValue || activeElement.textContent;
+          activeElement.contentEditable = "false";
+          if (editBtn) {
+            editBtn.querySelector('svg:first-child').classList.remove('hidden');
+            editBtn.querySelector('svg:last-child').classList.add('hidden');
+            editBtn.title = `Edit ${activeElement.closest('.output-item').querySelector('.output-label').textContent.slice(0,-1)}`;
+          }
+          activeElement.classList.remove('focus:ring-2','focus:ring-indigo-400','bg-slate-700');
+        }
+      }
+    });
+
+    // --- Hex code fetching logic via backend ---
+
+    async function forceFetchHexCode(descriptiveColor, hexDataKey) {
+      if (!descriptiveColor) { showMessage("No color name to search for.", true); return; }
+      currentProcessedData[hexDataKey] = 'loading';
+      refreshOutputDisplay();
+      const hex = await getHexCode(descriptiveColor, true);
+      currentProcessedData[hexDataKey] = hex;
+      refreshOutputDisplay();
+    }
+
+    async function fetchHexCodesAsync(fetchText, fetchOutline) {
+      if (fetchText && currentProcessedData.textColorDescriptive) {
+        const hex = await getHexCode(currentProcessedData.textColorDescriptive);
+        currentProcessedData.textColorHex = hex;
+        refreshOutputDisplay();
+      }
+      if (fetchOutline && currentProcessedData.outlineColorDescriptive) {
+        const hex = await getHexCode(currentProcessedData.outlineColorDescriptive);
+        currentProcessedData.outlineColorHex = hex;
+        refreshOutputDisplay();
+      }
+    }
+
+    async function getHexCode(colorName, bypassCache = false) {
+      // Priority 1: Internal trusted DB
+      const localHex = getHexFromLocalDB(colorName);
+      if (localHex !== "N/A") return localHex;
+
+      // Priority 2: Browser cache
+      const canonicalName = getCanonicalColorName(colorName);
+      const hexCache = getHexCache();
+      if (!bypassCache && hexCache[canonicalName]) {
+        const cachedData = hexCache[canonicalName];
+        const now = Date.now();
+        if (now < cachedData.expiry) return cachedData.hex;
+      }
+
+      // Priority 3: Backend (Gemini)
+      if (!BASE_API_URL || BASE_API_URL.includes("REPLACE_WITH_YOUR_WORKER_URL")) return "N/A";
+      try {
+        const url = new URL(`${BASE_API_URL}/api/hex`);
+        url.searchParams.set('color', colorName);
+        if (bypassCache) url.searchParams.set('bypassCache', '1');
+        const res = await fetch(url.toString(), { method: 'GET' });
+        if (!res.ok) return "N/A";
+        const data = await res.json();
+        const hex = data?.hex || "N/A";
+        if (isValidHex(hex)) {
+          const expiry = Date.now() + 30 * 24 * 60 * 60 * 1000;
+          const currentCache = getHexCache();
+          currentCache[canonicalName] = { hex, expiry };
+          saveHexCache(currentCache);
+          return hex;
+        }
+        return "N/A";
+      } catch {
+        return "N/A";
+      }
+    }
+
+    function getHexFromLocalDB(colorName) {
+      const canonicalName = getCanonicalColorName(colorName);
+      for (const mapKey in commonColorHexMap) {
+        if (getCanonicalColorName(mapKey) === canonicalName) {
+          return commonColorHexMap[mapKey];
+        }
+      }
+      return "N/A";
+    }
   </script>
 </body>
 </html>

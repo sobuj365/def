@@ -1,0 +1,12 @@
+name = "def-backend"
+main = "backend/worker.js"
+compatibility_date = "2024-11-20"
+
+# After you create KV namespaces, replace the IDs below.
+kv_namespaces = [
+  { binding = "HEX_CACHE", id = "REPLACE_WITH_HEX_CACHE_ID" },
+  { binding = "KEY_STATE", id = "REPLACE_WITH_KEY_STATE_ID" }
+]
+
+[vars]
+# GEMINI_KEYS will be set as a secret (do not add here).
